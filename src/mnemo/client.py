@@ -19,7 +19,7 @@ from typing_extensions import Self
 from .errors import MnemoHTTPError
 from .models import Memory, PaginatedMemories, SearchResponse
 
-_DEFAULT_BASE_URL = "https://api.getmnemo.xyz"
+_DEFAULT_BASE_URL = "https://api.mnemohq.com"
 _DEFAULT_TIMEOUT = 30.0
 _USER_AGENT = "getmnemo-python/0.1.0"
 _DEFAULT_MAX_RETRIES = 3

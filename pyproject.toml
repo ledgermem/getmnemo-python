@@ -9,7 +9,7 @@ description = "Python SDK for Mnemo Memory — long-term memory infrastructure f
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.9"
-authors = [{ name = "Mnemo", email = "founders@getmnemo.xyz" }]
+authors = [{ name = "Mnemo", email = "founders@mnemohq.com" }]
 keywords = ["memory", "llm", "agents", "rag", "vector", "longmemeval"]
 classifiers = [
   "Development Status :: 3 - Alpha",
@@ -43,8 +43,8 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://getmnemo.xyz"
-Documentation = "https://getmnemo.xyz/docs"
+Homepage = "https://mnemohq.com"
+Documentation = "https://mnemohq.com/docs"
 Repository = "https://github.com/getmnemo/getmnemo-python"
 Issues = "https://github.com/getmnemo/getmnemo-python/issues"
 
