@@ -135,6 +135,7 @@ def test_add_sends_container_and_items_only() -> None:
         assert isinstance(body["items"], list) and len(body["items"]) == 1
         item = body["items"][0]
         assert set(item) <= ALLOWED_ITEM_KEYS, f"unknown item keys: {set(item) - ALLOWED_ITEM_KEYS}"
+        assert isinstance(item.pop("idempotencyKey"), str)  # auto-generated
         assert item == {
             "content": "User prefers Japanese rice.",
             "metadata": {"source": "test"},
@@ -161,8 +162,11 @@ def test_add_many_builds_items_and_rejects_unknown_keys() -> None:
     def handler(req: httpx.Request) -> httpx.Response:
         body = json.loads(req.content)
         assert set(body) == {"containerTag", "items"}
+        auto_key = body["items"][0].pop("idempotencyKey")
+        assert isinstance(auto_key, str) and auto_key
         assert body["items"] == [
             {"content": "a"},
+            # Caller-supplied key is kept, not replaced.
             {"content": "b", "idempotencyKey": "k-1", "memoryType": "fact"},
         ]
         return httpx.Response(201, json=_add_response())
@@ -246,6 +250,47 @@ def test_search_container_not_found_returns_empty() -> None:
         return httpx.Response(404, json={"message": "Container not found", "statusCode": 404})
 
     assert _sync(handler).search("anything") == []
+
+
+def test_search_other_404_raises() -> None:
+    def handler(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"message": "Cannot POST /v1/serch", "statusCode": 404})
+
+    with pytest.raises(MnemoHTTPError) as exc:
+        _sync(handler).search("anything")
+    assert exc.value.status == 404
+
+
+def test_search_404_non_json_raises() -> None:
+    def handler(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, text="<html>not found</html>")
+
+    with pytest.raises(MnemoHTTPError):
+        _sync(handler).search("anything")
+
+
+def test_add_idempotency_key_stable_across_retries(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("getmnemo.client.time.sleep", lambda _s: None)
+    keys: list[str] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        keys.append(json.loads(req.content)["items"][0]["idempotencyKey"])
+        if len(keys) == 1:
+            return httpx.Response(503, json={"message": "unavailable"})
+        return httpx.Response(201, json=_add_response())
+
+    _sync(handler).add("note")
+    assert len(keys) == 2
+    assert keys[0] == keys[1] and keys[0]
+
+
+def test_add_no_auto_key_when_retries_disabled() -> None:
+    def handler(req: httpx.Request) -> httpx.Response:
+        assert "idempotencyKey" not in json.loads(req.content)["items"][0]
+        return httpx.Response(201, json=_add_response())
+
+    client = httpx.Client(base_url="http://test", transport=httpx.MockTransport(handler))
+    Mnemo(api_key="t", default_container_tag="user:jane", client=client, max_retries=0).add("n")
 
 
 def test_search_tolerates_future_empty_results_shape() -> None:
@@ -356,3 +401,34 @@ async def test_async_search_container_not_found_returns_empty() -> None:
 
     async with _async(handler) as m:
         assert await m.search("anything") == []
+
+
+@pytest.mark.asyncio
+async def test_async_search_other_404_raises() -> None:
+    def handler(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"message": "Route not found"})
+
+    async with _async(handler) as m:
+        with pytest.raises(MnemoHTTPError):
+            await m.search("anything")
+
+
+@pytest.mark.asyncio
+async def test_async_add_idempotency_key_stable_across_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def no_sleep(_s: float) -> None:
+        return None
+
+    monkeypatch.setattr("getmnemo.client.asyncio.sleep", no_sleep)
+    keys: list[str] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        keys.append(json.loads(req.content)["items"][0]["idempotencyKey"])
+        if len(keys) == 1:
+            return httpx.Response(429, json={"message": "slow down"})
+        return httpx.Response(201, json=_add_response())
+
+    async with _async(handler) as m:
+        await m.add("note")
+    assert len(keys) == 2 and keys[0] == keys[1]

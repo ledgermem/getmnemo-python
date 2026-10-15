@@ -19,6 +19,7 @@ import asyncio
 import os
 import random
 import time
+import uuid
 from collections.abc import Awaitable, Mapping, Sequence
 from typing import Any, Callable, TypeVar, Union
 from urllib.parse import quote
@@ -173,7 +174,22 @@ def _raise_for_status(resp: httpx.Response) -> None:
     raise MnemoHTTPError(message or "Unknown error", resp.status_code, body)
 
 
-def _build_items(items: Sequence[MemoryItemInput]) -> list[dict[str, Any]]:
+def _is_container_not_found(resp: httpx.Response) -> bool:
+    """True only for the API's 404 "Container not found" (never-written container)."""
+    if resp.status_code != 404:
+        return False
+    try:
+        body = resp.json()
+    except ValueError:
+        return False
+    if not isinstance(body, dict):
+        return False
+    return "container not found" in str(body.get("message", "")).lower()
+
+
+def _build_items(
+    items: Sequence[MemoryItemInput], *, auto_idempotency_key: bool = False
+) -> list[dict[str, Any]]:
     """Normalize add_many items to the wire shape, rejecting unknown keys.
 
     The API's global validation rejects unknown body keys with a 400, so we
@@ -184,7 +200,7 @@ def _build_items(items: Sequence[MemoryItemInput]) -> list[dict[str, Any]]:
     built: list[dict[str, Any]] = []
     for index, item in enumerate(items):
         if isinstance(item, str):
-            built.append({"content": item})
+            built.append(_with_key({"content": item}, auto_idempotency_key))
             continue
         unknown = set(item) - set(_ITEM_KEY_MAP)
         if unknown:
@@ -195,9 +211,23 @@ def _build_items(items: Sequence[MemoryItemInput]) -> list[dict[str, Any]]:
         if not item.get("content"):
             raise ValueError(f"add_many() item {index} requires a non-empty 'content'")
         built.append(
-            {_ITEM_KEY_MAP[key]: value for key, value in item.items() if value is not None}
+            _with_key(
+                {_ITEM_KEY_MAP[key]: value for key, value in item.items() if value is not None},
+                auto_idempotency_key,
+            )
         )
     return built
+
+
+def _with_key(item: dict[str, Any], auto: bool) -> dict[str, Any]:
+    """Add a generated idempotencyKey so a retried write cannot duplicate.
+
+    Generated once per call (the payload is built before the retry loop), so
+    every retry of the same request carries the same key.
+    """
+    if auto and "idempotencyKey" not in item:
+        return {**item, "idempotencyKey": str(uuid.uuid4())}
+    return item
 
 
 def _search_payload(q: str, container_tag: str, limit: int | None) -> dict[str, Any]:
@@ -318,7 +348,7 @@ class Mnemo(_BaseClient):
             lambda: self._client.post("/v1/search", json=_search_payload(q, tag, limit)),
             self._max_retries,
         )
-        if resp.status_code == 404:
+        if _is_container_not_found(resp):
             return []
         _raise_for_status(resp)
         return _parse_search_results(resp.json())
@@ -348,7 +378,10 @@ class Mnemo(_BaseClient):
         optional ``metadata``, ``idempotency_key``, and ``memory_type``.
         """
         tag = self._require_container("add_many()", container_tag)
-        payload = {"containerTag": tag, "items": _build_items(items)}
+        payload = {
+            "containerTag": tag,
+            "items": _build_items(items, auto_idempotency_key=self._max_retries > 0),
+        }
         resp = _send_with_retries(
             lambda: self._client.post("/v1/memories", json=payload),
             self._max_retries,
@@ -470,7 +503,7 @@ class AsyncMnemo(_BaseClient):
             lambda: self._client.post("/v1/search", json=_search_payload(q, tag, limit)),
             self._max_retries,
         )
-        if resp.status_code == 404:
+        if _is_container_not_found(resp):
             return []
         _raise_for_status(resp)
         return _parse_search_results(resp.json())
@@ -500,7 +533,10 @@ class AsyncMnemo(_BaseClient):
         optional ``metadata``, ``idempotency_key``, and ``memory_type``.
         """
         tag = self._require_container("add_many()", container_tag)
-        payload = {"containerTag": tag, "items": _build_items(items)}
+        payload = {
+            "containerTag": tag,
+            "items": _build_items(items, auto_idempotency_key=self._max_retries > 0),
+        }
         resp = await _send_with_retries_async(
             lambda: self._client.post("/v1/memories", json=payload),
             self._max_retries,
