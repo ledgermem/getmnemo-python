@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "getmnemo"
-version = "0.1.2"
+version = "0.2.0"
 description = "Python SDK for Mnemo Memory — long-term memory infrastructure for AI agents."
 readme = "README.md"
 license = { text = "MIT" }
@@ -45,11 +45,11 @@ dev = [
 [project.urls]
 Homepage = "https://mnemohq.com"
 Documentation = "https://mnemohq.com/docs"
-Repository = "https://github.com/getmnemo/getmnemo-python"
-Issues = "https://github.com/getmnemo/getmnemo-python/issues"
+Repository = "https://github.com/ledgermem/getmnemo-python"
+Issues = "https://github.com/ledgermem/getmnemo-python/issues"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/mnemo"]
+packages = ["src/getmnemo", "src/mnemo"]
 
 [tool.ruff]
 line-length = 100
